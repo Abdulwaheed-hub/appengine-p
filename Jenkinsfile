@@ -2,96 +2,66 @@ pipeline {
     agent any
 
     environment {
-        PROJECT_ID = "my-project-dev1-491515"
-        SERVICE_ACCOUNT = credentials('gcp-service-key') 
-        APP_VERSION = "v${BUILD_NUMBER}"
-    }
-
-    options {
-        timestamps()
+        PROJECT_ID = 'my-project-dev1-491515'
     }
 
     stages {
 
-        stage('Setup Python & Install Dependencies') {
+        stage('Setup Python 3.11') {
             steps {
+                echo "===== Setting up Python 3.11 ====="
                 sh '''
-                echo "Setting up Python environment..."
+                    python3 --version
+                    python3 -m venv venv
 
-                python3 -m venv venv
-                . venv/bin/activate
+                    . venv/bin/activate
 
-                pip install --upgrade pip
-                pip install -r requirements.txt
+                    pip install --upgrade pip setuptools wheel
+                    pip install -r requirements.txt
                 '''
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Clean Workspace') {
             steps {
-                sh '''
-                echo "Installing dependencies..."
-                npm install || true
-                '''
+                echo "===== Cleaning old deployment artifacts ====="
+                sh 'rm -rf .gcloudignore staging/'
             }
         }
 
-        stage('Run Tests') {
-            steps {
-                sh '''
-                echo "Running tests..."
-                npm test || echo "No tests configured"
-                '''
-            }
-        }
-
-     
         stage('Authenticate GCP') {
             steps {
-                sh '''
-                echo "Authenticating with GCP..."
-
-                echo "$SERVICE_ACCOUNT_KEY" > key.json
-
-                gcloud auth activate-service-account --key-file=key.json
-                gcloud config set project $PROJECT_ID
-                '''
+                echo "===== Authenticating with GCP ====="
+                withCredentials([file(credentialsId: 'gcp-service-account', variable: 'KEYFILE')]) {
+                    sh '''
+                        gcloud auth activate-service-account --key-file=$KEYFILE
+                        gcloud config set project ${PROJECT_ID}
+                    '''
+                }
             }
         }
 
-           stage('Deploy to App Engine') {
+        stage('Deploy to App Engine') {
             steps {
+                echo "===== Deploying App Engine ====="
                 sh '''
-                echo "Deploying to App Engine..."
-
-                gcloud app deploy app.yaml \
-                --version=$APP_VERSION \
-                --quiet
-                '''
-            }
-        }
-    }
-
-        stage('Promote Version') {
-            steps {
-                sh '''
-                gcloud app services set-traffic default \
-                --splits $APP_VERSION=1 \
-                --quiet
+                    . venv/bin/activate
+                    gcloud app deploy app.yaml --quiet --verbosity=info
                 '''
             }
         }
     }
 
     post {
+        always {
+            echo "Cleaning up workspace..."
+            cleanWs()
+        }
         success {
-            echo "✅ Deployment successful: Version $APP_VERSION"
+            echo "Deployment succeeded!"
         }
         failure {
-            echo "❌ Deployment failed"
-        }
-        always {
-            sh 'rm -f key.json'
+            echo "Deployment failed!"
         }
     }
 }
